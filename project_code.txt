@@ -1,0 +1,99 @@
+# Load Packages #######
+library(readr)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+
+# Import CSV Files #######
+train_df <- read_csv('C:/Users/14094/analyst-intern-2027-jocebeav-95170b98/training.csv.gz')
+test_df <- read_csv('C:/Users/14094/analyst-intern-2027-jocebeav-95170b98/testing.csv.gz')
+
+# Viewing Data #######
+glimpse(train_df)
+view(train_df)
+
+# Explore features #######
+model2 <- glm(outcome ~ num_contesters + contested + gamestate + shottype+ distance + three + dribblesbefore + shotclock + locationx + closestdefdist + shooterspeed, data = train_df, family = 'binomial')
+summary(model2)
+
+
+# Prepare Model #######
+preds2 <-predict(model2, newdata = test_df, type = 'response')
+
+# Validating model #######
+summary(preds2)
+mean(train_df$outcome) # comparing mean
+
+set.seed(42)  # makes the random split reproducible
+train_indices <- sample(1:nrow(train_df), size = 0.8 * nrow(train_df))
+
+train_split <- train_df[train_indices, ]   # 80% — fit the model on this
+val_split <- train_df[-train_indices, ]    # 20% — check performance on this
+
+model_val <- glm(outcome ~ num_contesters + contested + gamestate + shottype + distance + three + dribblesbefore + shotclock + locationx + closestdefdist + shooterspeed,
+                 data = train_split, family = 'binomial')
+
+val_preds <- predict(model_val, newdata = val_split, type = "response")
+
+log_loss <- function(actual, predicted) {
+  eps <- 1e-15
+  predicted <- pmin(pmax(predicted, eps), 1 - eps)
+  -mean(actual * log(predicted) + (1 - actual) * log(1 - predicted))
+}
+
+log_loss(as.numeric(val_split$outcome), val_preds)
+
+# Baseline: predicting the mean outcome for every validation shot #######
+baseline_pred <- mean(train_split$outcome)   # 0.4580698 — the mean from your training split
+baseline_preds <- rep(baseline_pred, nrow(val_split))
+
+log_loss(as.numeric(val_split$outcome), baseline_preds)
+
+# Adding predictions to submission file #######
+sub <- read.csv('C:/Users/14094/analyst-intern-2027-jocebeav-95170b98/submission.csv')
+head(sub)
+sub$make_prob <- preds2
+head(sub)
+
+write_csv(sub,'C:/Users/14094/analyst-intern-2027-jocebeav-95170b98/submission.csv')
+
+# Maksub# Making sure columns line up #######
+view(sub)
+view(test_df)
+all(sub$shot_id == test_df$shot_id)
+
+# Visualizations for write-up #######
+
+##which features prioritized
+coef_df <- data.frame(
+  feature = names(coef(model2))[-1],
+  estimate = coef(model2)[-1])
+
+ggplot(coef_df, aes(x = reorder(feature, estimate), y = estimate)) +
+  geom_col(fill = "steelblue1") +
+  coord_flip() +
+  labs(title = "Model Coefficients by Feature",
+       x = "Feature", y = "Coefficient Estimate")
+
+##biggest driver
+train_df %>%
+  group_by(shottype) %>%
+  summarise(make_rate = mean(outcome)) %>%
+  ggplot(aes(x = reorder(shottype, make_rate), y = make_rate)) +
+  geom_col(fill = "goldenrod2") +
+  coord_flip() +
+  labs(title = "Actual Make Rate by Shot Type", x = "Shot Type", y = "Make Rate")
+
+#distance core relationship
+train_df %>%
+  mutate(distance_bin = round(distance / 2) * 2) %>%
+  group_by(distance_bin) %>%
+  summarise(make_rate = mean(outcome), n = n()) %>%
+  filter(n > 30) %>%
+  ggplot(aes(x = distance_bin, y = make_rate)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "tomato") +
+  labs(title = "Shot Make Probability vs. Distance",
+       x = "Distance (ft)", y = "Probability of Making Shot")
+
+
